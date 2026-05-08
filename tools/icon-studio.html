@@ -142,9 +142,11 @@
 // ── Build the SVG. Internally drawn at viewBox 0 0 128 128 (the largest size)
 // and then rasterized to the requested target size for download.
 function buildSvg({ letters = 'abc', bg = '#0a0a0a', orp = '#ff4444',
-                   radius = 20, showTicks = true } = {}) {
+                   radius = 20, showTicks = true, cropped = false } = {}) {
   const VB = 128;
-  const fontSize = 56;
+  // Cropped variant zooms in so the side letters get clipped at the rounded
+  // rect — needed at 16px where a smaller font becomes mush.
+  const fontSize = cropped ? 112 : 56;
   const cx = VB / 2;
   const baselineY = cx + fontSize * 0.36;   // visual vertical centering for monospace caps
 
@@ -152,14 +154,25 @@ function buildSvg({ letters = 'abc', bg = '#0a0a0a', orp = '#ff4444',
   const c1 = (letters[1] || '').replace(/[<>&'"]/g, '');
   const c2 = (letters[2] || '').replace(/[<>&'"]/g, '');
 
-  const tickOffset = showTicks ? `
+  // Ticks would be sub-pixel slivers at 16px and visually compete with the
+  // cropped letters, so they're suppressed in the cropped variant.
+  const tickOffset = (showTicks && !cropped) ? `
     <line x1="${cx}" y1="${cx - fontSize * 0.5 - 8}" x2="${cx}" y2="${cx - fontSize * 0.5 - 2}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>
     <line x1="${cx}" y1="${cx + fontSize * 0.5 + 2}" x2="${cx}" y2="${cx + fontSize * 0.5 + 8}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>` : '';
 
+  // clipPath keeps overflowing letters tucked inside the rounded rect rather
+  // than spilling into the square viewBox corners.
+  const clipId = 'clip' + Math.random().toString(36).slice(2, 8);
+
   return `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB} ${VB}">
+      <defs>
+        <clipPath id="${clipId}">
+          <rect width="${VB}" height="${VB}" rx="${radius}" ry="${radius}"/>
+        </clipPath>
+      </defs>
       <rect width="${VB}" height="${VB}" rx="${radius}" ry="${radius}" fill="${bg}"/>
-      <g font-family="ui-monospace, 'Courier New', monospace" font-weight="700" font-size="${fontSize}" text-anchor="middle">
+      <g clip-path="url(#${clipId})" font-family="ui-monospace, 'Courier New', monospace" font-weight="700" font-size="${fontSize}" text-anchor="middle">
         <text x="${cx}" y="${baselineY}">
           <tspan fill="#fff" opacity="0.9">${c0}</tspan><tspan fill="${orp}">${c1}</tspan><tspan fill="#fff" opacity="0.9">${c2}</tspan>
         </text>
@@ -179,8 +192,9 @@ function getOpts() {
 }
 
 function renderPreviews() {
-  const svg = buildSvg(getOpts());
+  const opts = getOpts();
   for (const size of [16, 48, 128]) {
+    const svg = buildSvg({ ...opts, cropped: size === 16 });
     const host = document.getElementById('preview' + size);
     host.innerHTML = svg.replace(/<svg /, `<svg width="${size}" height="${size}" `);
   }
@@ -191,7 +205,7 @@ function renderPreviews() {
 
 // ── PNG export via canvas
 async function downloadAt(size, filename) {
-  const svg = buildSvg(getOpts());
+  const svg = buildSvg({ ...getOpts(), cropped: size === 16 });
   const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
