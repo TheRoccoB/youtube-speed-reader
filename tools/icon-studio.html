@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YouTube Speed Reader — Icon Studio</title>
+<style>
+  :root {
+    --bg: #0e0e10;
+    --fg: #f5f5f7;
+    --dim: #999;
+    --accent: #ff4444;
+    --panel: #18181a;
+    --border: #2a2a2e;
+  }
+  body {
+    margin: 0; padding: 32px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; }
+  p  { color: var(--dim); max-width: 720px; margin: 0 0 24px; line-height: 1.5; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    max-width: 880px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 32px;
+    padding: 18px 0; border-bottom: 1px solid var(--border);
+  }
+  .row:last-child { border-bottom: none; }
+  .preview {
+    background: #000; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .label { flex: 1; }
+  .label strong { display: block; font-size: 14px; }
+  .label small  { display: block; color: var(--dim); margin-top: 4px; font-size: 12px; }
+  button {
+    background: #2a2a2e; color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; font: inherit; font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #3a3a3e; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.1); }
+  .controls { display: flex; gap: 8px; align-items: center; }
+
+  /* Tweakable inputs */
+  .tweaks {
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 8px 16px; align-items: center;
+    margin: 24px 0 8px;
+    font-size: 13px; color: var(--dim);
+  }
+  .tweaks input[type=color] { width: 48px; height: 28px; border: 0; background: transparent; cursor: pointer; }
+  .tweaks input[type=text]  { background: #2a2a2e; color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font: inherit; font-size: 12px; }
+  .tweaks input[type=range] { width: 100%; }
+</style>
+</head>
+
+<body>
+<div class="panel">
+  <h1>YouTube Speed Reader — Icon Studio</h1>
+  <p>
+    Mocks up the extension icon as an SVG that mirrors the overlay's actual look
+    (dark rounded rect, three monospace letters with a red center, ORP tick marks).
+    Use the export buttons to download properly-sized PNGs for the manifest.
+  </p>
+
+  <div class="tweaks">
+    <label>Letters</label>
+    <input id="letters" type="text" value="abc" maxlength="3" />
+    <span></span>
+
+    <label>Background</label>
+    <input id="bg" type="color" value="#0a0a0a" />
+    <span class="hex" id="bgHex">#0a0a0a</span>
+
+    <label>ORP color</label>
+    <input id="orp" type="color" value="#ff4444" />
+    <span class="hex" id="orpHex">#ff4444</span>
+
+    <label>Corner radius</label>
+    <input id="radius" type="range" min="0" max="40" value="20" />
+    <span class="hex" id="radiusVal">20</span>
+
+    <label>Show ticks</label>
+    <input id="ticks" type="checkbox" checked />
+    <span></span>
+  </div>
+
+  <div class="row">
+    <div class="preview" id="preview128" style="width:128px;height:128px"></div>
+    <div class="label">
+      <strong>128 × 128</strong>
+      <small>Chrome Web Store listing, install dialog. Most important.</small>
+    </div>
+    <div class="controls">
+      <button data-size="128">Download icon128.png</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="preview" id="preview48" style="width:48px;height:48px"></div>
+    <div class="label">
+      <strong>48 × 48</strong>
+      <small>Used on the chrome://extensions page.</small>
+    </div>
+    <div class="controls">
+      <button data-size="48">Download icon48.png</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="preview" id="preview16" style="width:16px;height:16px"></div>
+    <div class="label">
+      <strong>16 × 16</strong>
+      <small>Toolbar / tab favicon. Detail must survive at this size.</small>
+    </div>
+    <div class="controls">
+      <button data-size="16">Download icon16.png</button>
+    </div>
+  </div>
+
+  <div class="row" style="border-top:1px solid var(--border);padding-top:24px;">
+    <div class="label">
+      <strong>Export all three at once</strong>
+      <small>Drops <code>icon16.png</code>, <code>icon48.png</code>, <code>icon128.png</code> in your Downloads folder. Move them into <code>src/icons/</code> and rebuild.</small>
+    </div>
+    <div class="controls">
+      <button id="downloadAll" class="primary">Download all (16 / 48 / 128)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Build the SVG. Internally drawn at viewBox 0 0 128 128 (the largest size)
+// and then rasterized to the requested target size for download.
+function buildSvg({ letters = 'abc', bg = '#0a0a0a', orp = '#ff4444',
+                   radius = 20, showTicks = true } = {}) {
+  const VB = 128;
+  const fontSize = 56;
+  const cx = VB / 2;
+  const baselineY = cx + fontSize * 0.36;   // visual vertical centering for monospace caps
+
+  const c0 = (letters[0] || '').replace(/[<>&'"]/g, '');
+  const c1 = (letters[1] || '').replace(/[<>&'"]/g, '');
+  const c2 = (letters[2] || '').replace(/[<>&'"]/g, '');
+
+  const tickOffset = showTicks ? `
+    <line x1="${cx}" y1="${cx - fontSize * 0.5 - 8}" x2="${cx}" y2="${cx - fontSize * 0.5 - 2}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>
+    <line x1="${cx}" y1="${cx + fontSize * 0.5 + 2}" x2="${cx}" y2="${cx + fontSize * 0.5 + 8}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>` : '';
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VB} ${VB}">
+      <rect width="${VB}" height="${VB}" rx="${radius}" ry="${radius}" fill="${bg}"/>
+      <g font-family="ui-monospace, 'Courier New', monospace" font-weight="700" font-size="${fontSize}" text-anchor="middle">
+        <text x="${cx}" y="${baselineY}">
+          <tspan fill="#fff" opacity="0.9">${c0}</tspan><tspan fill="${orp}">${c1}</tspan><tspan fill="#fff" opacity="0.9">${c2}</tspan>
+        </text>
+      </g>
+      ${tickOffset}
+    </svg>`.trim();
+}
+
+function getOpts() {
+  return {
+    letters:   document.getElementById('letters').value || 'abc',
+    bg:        document.getElementById('bg').value,
+    orp:       document.getElementById('orp').value,
+    radius:    parseInt(document.getElementById('radius').value, 10),
+    showTicks: document.getElementById('ticks').checked,
+  };
+}
+
+function renderPreviews() {
+  const svg = buildSvg(getOpts());
+  for (const size of [16, 48, 128]) {
+    const host = document.getElementById('preview' + size);
+    host.innerHTML = svg.replace(/<svg /, `<svg width="${size}" height="${size}" `);
+  }
+  document.getElementById('bgHex').textContent     = getOpts().bg;
+  document.getElementById('orpHex').textContent    = getOpts().orp;
+  document.getElementById('radiusVal').textContent = getOpts().radius;
+}
+
+// ── PNG export via canvas
+async function downloadAt(size, filename) {
+  const svg = buildSvg(getOpts());
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload  = resolve;
+    img.onerror = reject;
+    img.src = url;
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, size, size);
+
+  await new Promise((resolve) => {
+    canvas.toBlob((pngBlob) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(pngBlob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      resolve();
+    }, 'image/png');
+  });
+  URL.revokeObjectURL(url);
+}
+
+// Wiring
+document.querySelectorAll('button[data-size]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const size = parseInt(btn.dataset.size, 10);
+    downloadAt(size, `icon${size}.png`);
+  });
+});
+document.getElementById('downloadAll').addEventListener('click', async () => {
+  for (const size of [16, 48, 128]) {
+    await downloadAt(size, `icon${size}.png`);
+    await new Promise(r => setTimeout(r, 150));   // tiny gap so browser shows them as separate downloads
+  }
+});
+
+// Live re-render on tweaks
+['letters', 'bg', 'orp', 'radius', 'ticks'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderPreviews);
+  document.getElementById(id).addEventListener('change', renderPreviews);
+});
+
+renderPreviews();
+</script>
+</body>
+</html>
