@@ -7,7 +7,7 @@
 
     // ============== CONFIG ==============
     const NAME             = 'YouTube Speed Reader';
-    const VERSION          = '0.10.9';
+    const VERSION          = '0.10.10';
     const STORAGE_KEYS = {
         enabled: 'spritz-rsvp-enabled',
         cc:      'spritz-rsvp-cc-visible',
@@ -312,7 +312,7 @@
             pointer-events: auto;
         `);
         b.id = 'spritz-open-btn';
-        b.title = 'Open Spritz reader';
+        b.title = 'Open ' + NAME;
         // Build "abc" with the middle char in ORP red — a hint at what the
         // overlay does (one word, ORP-highlighted).
         b.appendChild(el('span', 'opacity:0.85;', 'a'));
@@ -846,7 +846,7 @@
         }
 
         // eslint-disable-next-line no-console
-        console.log('[Spritz RSVP v' + VERSION + '] loaded. Hover the video for the open button, or press Shift+' + TOGGLE_KEY + '.');
+        console.log('[' + NAME + ' v' + VERSION + '] loaded. Hover the video for the open button, or press Shift+' + TOGGLE_KEY + '.');
     };
     boot();
 })();
