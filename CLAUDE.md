@@ -1,4 +1,4 @@
-# YouTube Speed Reader — Claude Code context
+# Rivet — Claude Code context
 
 Chrome extension (Manifest V3) that reads YouTube's closed-caption text and
 displays it as a Spritz-style RSVP overlay — one word at a time, with the ORP
@@ -84,8 +84,11 @@ These are bugs we already fixed once. Re-introducing them would regress.
 
   8. **Trademark: "Spritz" is registered to Spritz Inc.** Do not put
      "Spritz" in any user-facing string (manifest name, description, store
-     listing, marketing site). Internal class names / localStorage keys
-     still say `spritz` for legacy reasons; that's invisible to users.
+     listing, marketing site). As of v0.11.0 the internal symbols
+     (class names, IDs, localStorage keys, globals) are also `rivet`-
+     prefixed — there are no `spritz-*` references left. The v0.10.x →
+     v0.11.0 jump deliberately discards existing users' saved preferences;
+     they'll see defaults on first load of v0.11.0+.
 
 ## Architecture notes
 
@@ -109,8 +112,8 @@ These are bugs we already fixed once. Re-introducing them would regress.
     nav. We listen for it and reset state (drop the observer, clear
     lastCaptionText, re-find the caption container after a 600ms grace).
   - **Persistence.** `localStorage` keys live on the youtube.com origin,
-    not in `chrome.storage`. Three keys: `spritz-rsvp-enabled`,
-    `spritz-rsvp-cc-visible`, `spritz-rsvp-scale`.
+    not in `chrome.storage`. Three keys: `rivet-enabled`,
+    `rivet-cc-visible`, `rivet-scale`.
 
 ## Conventions
 
@@ -155,6 +158,20 @@ generated captions are a workaround until it's solved.
 
 ## Recent work (newest first)
 
+  - 0.11.0  Rebranded to "Rivet"; manifest name now
+            "Rivet — YouTube speed reader". Internal symbols (class
+            names, IDs, localStorage keys, globals) all renamed
+            `spritz-*` → `rivet-*`. Discards existing users' v0.10.x
+            preferences — accepted tradeoff to clean up pre-launch.
+            Also: open button shows a "Rivet" word-mark + is more
+            visually present, and overlay is suppressed on
+            youtube.com/shorts/ paths.
+  - 0.10.13 Default + snap position aligns with the bottom of YouTube's
+            `.caption-window` when present; falls back to BOTTOM_PCT.
+  - 0.10.12 Allow 4 more "+" levels (SCALE_MAX 2.5→4.0, userScale
+            upper bound 3.0→5.0).
+  - 0.10.11 Extra spacing between CC and × controls.
+  - 0.10.10 Removed user-visible "Spritz" strings; added MIT LICENSE.
   - 0.10.9  Adaptive per-word pacing using measured chunk intervals
             (works on auto-captions; manual captions still unsatisfactory
             — see "Open problems" above)

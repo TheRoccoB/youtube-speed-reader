@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>YouTube Speed Reader — Icon Studio</title>
+<title>Rivet — Icon Studio</title>
 <style>
   :root {
     --bg: #0e0e10;
@@ -65,7 +65,7 @@
 
 <body>
 <div class="panel">
-  <h1>YouTube Speed Reader — Icon Studio</h1>
+  <h1>Rivet — Icon Studio</h1>
   <p>
     Mocks up the extension icon as an SVG that mirrors the overlay's actual look
     (dark rounded rect, three monospace letters with a red center, ORP tick marks).
@@ -74,7 +74,7 @@
 
   <div class="tweaks">
     <label>Letters</label>
-    <input id="letters" type="text" value="abc" maxlength="3" />
+    <input id="letters" type="text" value="YouT" maxlength="4" />
     <span></span>
 
     <label>Background</label>
@@ -141,24 +141,46 @@
 <script>
 // ── Build the SVG. Internally drawn at viewBox 0 0 128 128 (the largest size)
 // and then rasterized to the requested target size for download.
-function buildSvg({ letters = 'abc', bg = '#0a0a0a', orp = '#ff4444',
+function buildSvg({ letters = 'YouT', bg = '#0a0a0a', orp = '#ff4444',
                    radius = 20, showTicks = true, cropped = false } = {}) {
   const VB = 128;
-  // Cropped variant zooms in so the side letters get clipped at the rounded
-  // rect — needed at 16px where a smaller font becomes mush.
-  const fontSize = cropped ? 112 : 56;
   const cx = VB / 2;
-  const baselineY = cx + fontSize * 0.36;   // visual vertical centering for monospace caps
 
-  const c0 = (letters[0] || '').replace(/[<>&'"]/g, '');
-  const c1 = (letters[1] || '').replace(/[<>&'"]/g, '');
-  const c2 = (letters[2] || '').replace(/[<>&'"]/g, '');
+  const safe = (letters || '').replace(/[<>&'"]/g, '').slice(0, 4) || 'YouT';
+  const len = safe.length;
 
-  // Ticks would be sub-pixel slivers at 16px and visually compete with the
-  // cropped letters, so they're suppressed in the cropped variant.
-  const tickOffset = (showTicks && !cropped) ? `
-    <line x1="${cx}" y1="${cx - fontSize * 0.5 - 8}" x2="${cx}" y2="${cx - fontSize * 0.5 - 2}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>
-    <line x1="${cx}" y1="${cx + fontSize * 0.5 + 2}" x2="${cx}" y2="${cx + fontSize * 0.5 + 8}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>` : '';
+  // Font size depends on letter count and zoom level. Larger letter counts
+  // need a smaller default to fit; 4-letter strings always overflow so the
+  // side letters get cropped at the rounded rect. The cropped variant zooms
+  // further for 16px legibility.
+  const FS = {
+    1: { normal: 100, cropped: 130 },
+    2: { normal:  80, cropped: 120 },
+    3: { normal:  56, cropped: 112 },
+    4: { normal:  60, cropped:  92 },
+  };
+  const fontSize = FS[len][cropped ? 'cropped' : 'normal'];
+  // 0.30 sits the text a touch above geometric center — compensates for the
+  // visual weight of descenders ('y' in 'YouT') so the cap-letters look
+  // centered to the eye rather than sliding low.
+  const baselineY = cx + fontSize * 0.30;
+
+  // ORP letter is the second char if there's room (matches the reader's own
+  // convention — "abc"→b, "YouT"→o), else the first.
+  const orpIdx = len >= 2 ? 1 : 0;
+  const tspans = Array.from(safe).map((c, i) =>
+    i === orpIdx
+      ? `<tspan fill="${orp}">${c}</tspan>`
+      : `<tspan fill="#fff" opacity="0.9">${c}</tspan>`
+  ).join('');
+
+  // Ticks bracket the ORP letter horizontally — for an even letter count
+  // the ORP isn't at viewBox center, so we compute its actual x.
+  const cellW = fontSize * 0.6;   // monospace cell ≈ 0.6em
+  const orpX = cx + (orpIdx - (len - 1) / 2) * cellW;
+  const tickOffset = showTicks ? `
+    <line x1="${orpX}" y1="${cx - fontSize * 0.5 - 8}" x2="${orpX}" y2="${cx - fontSize * 0.5 - 2}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>
+    <line x1="${orpX}" y1="${cx + fontSize * 0.5 + 2}" x2="${orpX}" y2="${cx + fontSize * 0.5 + 8}" stroke="${orp}" stroke-width="2" stroke-linecap="round"/>` : '';
 
   // clipPath keeps overflowing letters tucked inside the rounded rect rather
   // than spilling into the square viewBox corners.
@@ -173,9 +195,7 @@ function buildSvg({ letters = 'abc', bg = '#0a0a0a', orp = '#ff4444',
       </defs>
       <rect width="${VB}" height="${VB}" rx="${radius}" ry="${radius}" fill="${bg}"/>
       <g clip-path="url(#${clipId})" font-family="ui-monospace, 'Courier New', monospace" font-weight="700" font-size="${fontSize}" text-anchor="middle">
-        <text x="${cx}" y="${baselineY}">
-          <tspan fill="#fff" opacity="0.9">${c0}</tspan><tspan fill="${orp}">${c1}</tspan><tspan fill="#fff" opacity="0.9">${c2}</tspan>
-        </text>
+        <text x="${cx}" y="${baselineY}">${tspans}</text>
       </g>
       ${tickOffset}
     </svg>`.trim();
@@ -194,7 +214,12 @@ function getOpts() {
 function renderPreviews() {
   const opts = getOpts();
   for (const size of [16, 48, 128]) {
-    const svg = buildSvg({ ...opts, cropped: size === 16 });
+    // 16px uses the simpler 3-letter "You" composition — 4 letters at 16px
+    // becomes unreadable mush, and a 3-letter cropped variant with red 'o'
+    // reads clearly as a toolbar mark.
+    const svg = (size === 16)
+      ? buildSvg({ ...opts, letters: 'You', cropped: true })
+      : buildSvg({ ...opts, cropped: false });
     const host = document.getElementById('preview' + size);
     host.innerHTML = svg.replace(/<svg /, `<svg width="${size}" height="${size}" `);
   }
@@ -205,7 +230,9 @@ function renderPreviews() {
 
 // ── PNG export via canvas
 async function downloadAt(size, filename) {
-  const svg = buildSvg({ ...getOpts(), cropped: size === 16 });
+  const svg = (size === 16)
+    ? buildSvg({ ...getOpts(), letters: 'You', cropped: true })
+    : buildSvg({ ...getOpts(), cropped: false });
   const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 

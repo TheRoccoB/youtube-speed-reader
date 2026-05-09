@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rivet — YouTube speed reader</title>
+  <meta name="description" content="Rivet is a Chrome extension that overlays YouTube captions one word at a time, RSVP-style, with the optimal-recognition-point letter pinned in red." />
+  <link rel="icon" type="image/png" href="icons/icon128.png" />
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --panel: #141416;
+      --fg: #f5f5f7;
+      --dim: #9a9aa2;
+      --line: #26262a;
+      --accent: #ff4444;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, .mono {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    .wrap { max-width: 760px; margin: 0 auto; padding: 64px 24px 96px; }
+
+    /* Hero */
+    .hero { display: flex; align-items: center; gap: 24px; margin-bottom: 48px; }
+    .icon-mark {
+      width: 96px; height: 96px; flex-shrink: 0;
+      border-radius: 18px;
+      background: #0a0a0a;
+      display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 30px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.04) inset;
+      overflow: hidden;
+    }
+    .icon-mark .letters {
+      font-family: ui-monospace, "Courier New", monospace;
+      font-weight: 700; font-size: 50px;
+      color: #fff; opacity: .9; line-height: 1;
+      white-space: nowrap;
+      /* Letters extend past the box; .icon-mark { overflow: hidden } crops
+         them at the rounded rect, mirroring the extension icon. */
+    }
+    .icon-mark .letters .orp { color: var(--accent); opacity: 1; }
+    .hero h1 {
+      font-size: 32px; line-height: 1.2; margin: 0 0 6px;
+      font-weight: 700; letter-spacing: -0.01em;
+    }
+    .hero .tag { color: var(--dim); margin: 0; font-size: 17px; }
+    .hero .sub { color: var(--dim); margin: 8px 0 0; font-size: 13px; opacity: 0.75; }
+
+    /* CTA */
+    .cta { display: flex; gap: 12px; flex-wrap: wrap; margin: 32px 0 56px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 18px; border-radius: 10px;
+      font-weight: 600; font-size: 15px;
+      transition: filter .15s ease, transform .05s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: var(--accent); color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.08); text-decoration: none; }
+    .btn-ghost {
+      border: 1px solid var(--line); color: var(--fg); background: transparent;
+    }
+    .btn-ghost:hover { background: #1c1c1f; text-decoration: none; }
+    .btn-disabled {
+      pointer-events: none; opacity: .55; background: #2a2a2e; color: var(--fg);
+    }
+    .cta .note { color: var(--dim); font-size: 13px; align-self: center; }
+
+    /* Sections */
+    section { margin: 48px 0; }
+    h2 {
+      font-size: 20px; font-weight: 700; margin: 0 0 12px;
+      letter-spacing: -0.005em;
+    }
+    p { margin: 0 0 14px; color: #d4d4d8; }
+    p.dim { color: var(--dim); }
+
+    ol.steps { padding-left: 18px; color: #d4d4d8; }
+    ol.steps li { margin: 8px 0; }
+    ol.steps li code { color: #fff; background: #1c1c1f; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+
+    /* Footer */
+    footer {
+      margin-top: 72px; padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--dim); font-size: 13px;
+      display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between;
+    }
+    footer a { color: var(--dim); }
+    footer a:hover { color: var(--fg); }
+
+    @media (max-width: 520px) {
+      .hero { gap: 16px; }
+      .icon-mark { width: 72px; height: 72px; border-radius: 14px; }
+      .icon-mark .letters { font-size: 32px; }
+      .hero h1 { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div class="icon-mark" aria-hidden="true">
+        <span class="letters">Y<span class="orp">o</span>uT</span>
+      </div>
+      <div>
+        <h1>Rivet</h1>
+        <p class="tag">Read YouTube captions one word at a time, with the optimal-recognition-point letter pinned in red.</p>
+        <p class="sub">A Chrome extension from Simmer Industries.</p>
+      </div>
+    </header>
+
+    <div class="cta">
+      <a class="btn btn-primary btn-disabled" aria-disabled="true" href="#">Install on Chrome Web Store</a>
+      <a class="btn btn-ghost" href="https://github.com/TheRoccoB/youtube-speed-reader">View on GitHub</a>
+      <span class="note">Pending Chrome Web Store review.</span>
+    </div>
+
+    <section>
+      <h2>What it does</h2>
+      <p>
+        Rivet watches the closed captions on whatever you're playing and overlays them on the video as a single-word, fixed-position display — the rapid serial visual presentation (RSVP) reading technique.
+        Each word's middle character is tinted red at its optimal recognition point so your eyes stay anchored.
+      </p>
+      <p class="dim">
+        Works best with auto-generated captions (the kind that stream word-by-word). Manual / professional captions arrive as full sentences and currently read with less ideal pacing.
+      </p>
+    </section>
+
+    <section>
+      <h2>How to use</h2>
+      <ol class="steps">
+        <li>Install the extension and refresh any open YouTube tab.</li>
+        <li>Hover the video player. A small <code>abc</code> badge appears in the top-right corner of the player &mdash; click it.</li>
+        <li>The overlay reads as the video plays. Drag it to reposition. Hover the overlay for size and CC controls.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Privacy</h2>
+      <p>
+        Nothing leaves your device. The extension reads caption text already shown on YouTube's player, renders it locally, and stores your preferences (overlay enabled, scale, position) in your browser's localStorage on the youtube.com origin only.
+        See the <a href="privacy.html">full privacy policy</a>.
+      </p>
+    </section>
+
+    <footer>
+      <span>&copy; 2026 TheRoccoB &middot; <a href="https://github.com/TheRoccoB/youtube-speed-reader/blob/main/LICENSE">MIT License</a></span>
+      <span><a href="privacy.html">Privacy</a> &middot; <a href="https://github.com/TheRoccoB/youtube-speed-reader">Source</a> &middot; <a href="https://github.com/TheRoccoB/youtube-speed-reader/issues">Issues</a></span>
+    </footer>
+  </div>
+</body>
+</html>

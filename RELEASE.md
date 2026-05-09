@@ -1,4 +1,4 @@
-# Release checklist — YouTube Speed Reader
+# Release checklist — Rivet
 
 Path from "works on my machine" to "live on the Chrome Web Store with a
 marketing site." Estimated end-to-end: a focused day of work plus the
@@ -6,15 +6,15 @@ marketing site." Estimated end-to-end: a focused day of work plus the
 
 ## 1. Branding
 
-- [x] Pick a working name (`YouTube Speed Reader`)
+- [x] Pick a working name — picked `Rivet` (manifest reads
+      `Rivet — YouTube speed reader` so it's both branded and
+      keyword-discoverable; `NAME` constant in code is just `Rivet`).
 - [x] Update `src/manifest.json` `name`
 - [x] Update `NAME` constant in `src/content.js`
-- [ ] Sanity-check: grep `Spritz` in user-visible strings — should return zero
-      hits in `manifest.json` and any UI text. Internal class names /
-      localStorage keys are fine (they're invisible to users).
-- [ ] Decide: keep "YouTube Speed Reader" or rebrand? Single-word names like
-      `Rivet`, `Tachi`, `Flick` are more memorable for a store listing but
-      "YouTube Speed Reader" is keyword-discoverable.
+- [x] Sanity-check: grep `Spritz` in user-visible strings — zero hits in
+      `manifest.json` and UI text. Internal class names / localStorage
+      keys still say `spritz` deliberately (invisible to users; renaming
+      would invalidate every existing user's saved preferences).
 
 ## 2. Icons
 
@@ -153,17 +153,11 @@ A single-page site is plenty.
 - [ ] Privacy policy as `docs/privacy.html` — start from the template in
       `README.md`, expand if your data practices ever change.
 - [ ] **Custom domain.** In repo Settings → Pages, set Custom domain to
-      your domain (e.g. `youtubespeedreader.com`).
-- [ ] **DNS at your registrar.** Two cases:
-  - **Apex domain** (`example.com`): A records to GitHub's Pages IPs:
-        185.199.108.153
-        185.199.109.153
-        185.199.110.153
-        185.199.111.153
-    Plus an AAAA record for IPv6 if you want it.
-  - **Subdomain** (`speedreader.example.com`): single CNAME to
-    `<your-username>.github.io`.
-  - **Both** apex + www: A records for apex, CNAME for `www.`
+      `rivet.simmerindustries.com` (subdomain of Simmer Industries' apex).
+- [ ] **DNS at simmerindustries.com's registrar.** Add a single CNAME:
+      `rivet  CNAME  TheRoccoB.github.io`.
+      (Apex / www records aren't needed — the apex domain isn't being
+      pointed at GitHub Pages, only the `rivet` subdomain.)
 - [ ] Wait 5-30 minutes for DNS to propagate. GitHub will detect and
       issue a Let's Encrypt cert automatically.
 - [ ] Toggle "Enforce HTTPS" once the cert is issued.

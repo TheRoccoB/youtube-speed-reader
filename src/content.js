@@ -2,16 +2,16 @@
 (function () {
     'use strict';
 
-    if (window.__spritzInstalled) return;
-    window.__spritzInstalled = true;
+    if (window.__rivetInstalled) return;
+    window.__rivetInstalled = true;
 
     // ============== CONFIG ==============
-    const NAME             = 'YouTube Speed Reader';
-    const VERSION          = '0.10.10';
+    const NAME             = 'Rivet';
+    const VERSION          = '0.11.0';
     const STORAGE_KEYS = {
-        enabled: 'spritz-rsvp-enabled',
-        cc:      'spritz-rsvp-cc-visible',
-        scale:   'spritz-rsvp-scale',
+        enabled: 'rivet-enabled',
+        cc:      'rivet-cc-visible',
+        scale:   'rivet-scale',
     };
     const DEFAULT_SCALE_FACTOR = 1.25;     // about two `+` clicks above 1.0
     const TOGGLE_KEY       = 'S';    // Shift + this key toggles overlay on/off
@@ -26,7 +26,7 @@
     const FONT_PX          = 36;     // natural (un-scaled) font size — actual on-screen size is FONT_PX * totalScale
     const SCALE_RATIO      = 0.0017; // auto-scale = player.height * this
     const SCALE_MIN        = 0.6;
-    const SCALE_MAX        = 2.5;
+    const SCALE_MAX        = 4.0;
     const AUTO_ENABLE_CC   = true;   // click YouTube's CC button if it's off when we toggle on
     const BOTTOM_PCT       = 0.13;   // overlay bottom edge sits this fraction of player height above player bottom
     const SNAP_PX          = 26;     // drag snaps overlay center to player center within this many pixels
@@ -82,7 +82,7 @@
     function storeCcVisible(on)     { lsSet(STORAGE_KEYS.cc, on ? '1' : '0'); }
     function loadStoredScale() {
         const v = parseFloat(lsGet(STORAGE_KEYS.scale));
-        return (isFinite(v) && v >= 0.4 && v <= 3.0) ? v : null;
+        return (isFinite(v) && v >= 0.4 && v <= 5.0) ? v : null;
     }
     function storeScale(v)          { lsSet(STORAGE_KEYS.scale, String(v)); }
 
@@ -131,7 +131,7 @@
             transform-origin: 50% 100%;
             touch-action: none;
         `);
-        root.id = 'spritz-rsvp-overlay';
+        root.id = 'rivet-overlay';
 
         const rail = el('div', `position:relative; width: ${RAIL}ch; margin: 0 auto;`);
 
@@ -172,6 +172,10 @@
         const plusBtn  = makeCtrlButton('plus');
         ccBtn          = makeCcButton();             // shared module-level ref for state updates
         const closeBtn = makeCtrlButton('close');
+        // A little extra breathing room before the × — visually separates the
+        // "kill the overlay" affordance from the size/CC controls so users
+        // don't dismiss it by accident while reaching for CC.
+        closeBtn.style.marginLeft = '12px';
         ctrlBox.appendChild(minusBtn);
         ctrlBox.appendChild(plusBtn);
         ctrlBox.appendChild(ccBtn);
@@ -180,13 +184,13 @@
             b.addEventListener('mousedown', e => e.stopPropagation());
         }
         minusBtn.addEventListener('click', e => {
-            scaleFactor = clamp(scaleFactor / 1.12, 0.4, 3.0);
+            scaleFactor = clamp(scaleFactor / 1.12, 0.4, 5.0);
             storeScale(scaleFactor);
             schedulePosition();
             e.stopPropagation();
         });
         plusBtn.addEventListener('click', e => {
-            scaleFactor = clamp(scaleFactor * 1.12, 0.4, 3.0);
+            scaleFactor = clamp(scaleFactor * 1.12, 0.4, 5.0);
             storeScale(scaleFactor);
             schedulePosition();
             e.stopPropagation();
@@ -264,25 +268,33 @@
         return player;
     }
 
+    // YouTube Shorts uses a vertical-video player at /shorts/<id>. The
+    // captions there are different (often burnt-in or repositioned) and the
+    // RSVP overlay doesn't make sense over a 60-second clip — so we suppress
+    // both the overlay and the open button when the user is on a Shorts URL.
+    function isShortsPath() {
+        return location.pathname.startsWith('/shorts/');
+    }
+
     // Inject a stylesheet for the open button: hidden by default, shown only
     // when the cursor hovers the player AND the overlay is OFF. Idempotent.
     function ensureOpenButtonStyle() {
-        if (document.getElementById('spritz-open-style')) return;
+        if (document.getElementById('rivet-open-style')) return;
         const s = document.createElement('style');
-        s.id = 'spritz-open-style';
+        s.id = 'rivet-open-style';
         s.textContent = `
-            #spritz-open-btn {
+            #rivet-open-btn {
                 opacity: 0;
                 pointer-events: none;
                 transition: opacity 0.15s ease;
             }
-            .html5-video-player:hover #spritz-open-btn,
-            #movie_player:hover #spritz-open-btn {
+            .html5-video-player:hover #rivet-open-btn,
+            #movie_player:hover #rivet-open-btn {
                 opacity: 1;
                 pointer-events: auto;
             }
             /* When the overlay is enabled, force-hide the open button. */
-            #spritz-open-btn[data-hide="1"] {
+            #rivet-open-btn[data-hide="1"] {
                 opacity: 0 !important;
                 pointer-events: none !important;
             }
@@ -291,35 +303,55 @@
     }
 
     function buildOpenButton() {
-        // Tiny clickable badge in the player's top-right. Looks like a mini
-        // version of the spritz overlay (a 3-letter pill with a red middle).
+        // Clickable badge in the player's top-right. Shows the abc/red-b mini-
+        // overlay preview alongside a "Rivet" word-mark — visible enough that
+        // first-time visitors notice and click it.
         // Visibility is controlled by injected CSS — opacity here is just the
         // initial value before the stylesheet attaches.
         const b = el('button', `
             position: absolute;
             top: 12px; right: 12px;
             z-index: 9999;
-            background: rgba(0,0,0,0.78);
-            border: 1px solid rgba(255,255,255,0.35);
+            background: rgba(0,0,0,0.85);
+            border: 1px solid rgba(255,255,255,0.55);
             color: #fff;
-            font-family: 'Courier New', ui-monospace, monospace;
-            font-size: 13px; font-weight: 700; line-height: 1;
-            padding: 5px 9px;
-            border-radius: 4px;
+            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+            font-size: 14px; font-weight: 700; line-height: 1;
+            padding: 7px 11px;
+            border-radius: 5px;
             cursor: pointer;
             user-select: none;
-            display: flex; align-items: center; justify-content: center; gap: 0;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
             pointer-events: auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
         `);
-        b.id = 'spritz-open-btn';
+        b.id = 'rivet-open-btn';
         b.title = 'Open ' + NAME;
-        // Build "abc" with the middle char in ORP red — a hint at what the
-        // overlay does (one word, ORP-highlighted).
-        b.appendChild(el('span', 'opacity:0.85;', 'a'));
-        b.appendChild(el('span', `color:${ORP_COLOR};`, 'b'));
-        b.appendChild(el('span', 'opacity:0.85;', 'c'));
-        b.addEventListener('mouseenter', () => b.style.background = 'rgba(0,0,0,0.92)');
-        b.addEventListener('mouseleave', () => b.style.background = 'rgba(0,0,0,0.78)');
+        // The "abc"/red-b mini-overlay preview.
+        const abc = el('span', 'display:inline-flex; gap:0;');
+        abc.appendChild(el('span', 'opacity:0.85;', 'a'));
+        abc.appendChild(el('span', `color:${ORP_COLOR};`, 'b'));
+        abc.appendChild(el('span', 'opacity:0.85;', 'c'));
+        b.appendChild(abc);
+        // Word-mark: the brand name next to the icon. Different font / weight
+        // so it reads as a label rather than part of the icon glyphs.
+        const label = el('span', `
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+            font-size: 13px; font-weight: 600; letter-spacing: 0.01em;
+            opacity: 0.95;
+        `, 'Rivet');
+        b.appendChild(label);
+        b.addEventListener('mouseenter', () => {
+            b.style.background   = 'rgba(0,0,0,0.95)';
+            b.style.borderColor  = ORP_COLOR;
+            b.style.transform    = 'translateY(-1px)';
+        });
+        b.addEventListener('mouseleave', () => {
+            b.style.background   = 'rgba(0,0,0,0.85)';
+            b.style.borderColor  = 'rgba(255,255,255,0.55)';
+            b.style.transform    = '';
+        });
         b.addEventListener('mousedown',  e => e.stopPropagation());
         b.addEventListener('click', e => {
             setEnabled(true);
@@ -328,13 +360,14 @@
         return b;
     }
 
-    // The actual show/hide is done by CSS (player:hover #spritz-open-btn).
+    // The actual show/hide is done by CSS (player:hover #rivet-open-btn).
     // We only toggle a data attribute that force-hides it when the overlay
     // is enabled — so the open button doesn't appear on top of the overlay.
     function updateOpenButtonVisibility() {
         if (!openButtonEl) return;
-        if (enabled) openButtonEl.setAttribute('data-hide', '1');
-        else         openButtonEl.removeAttribute('data-hide');
+        // On Shorts, force-hide regardless of enabled state.
+        if (isShortsPath() || enabled) openButtonEl.setAttribute('data-hide', '1');
+        else                           openButtonEl.removeAttribute('data-hide');
     }
 
     // Build a control button with a CSS-drawn icon (not a Unicode glyph).
@@ -459,10 +492,10 @@
 
                 // Snap Y to the default auto-anchor position when close. This
                 // is the same y the overlay would render at if you'd never
-                // dragged it (BOTTOM_PCT of the player height up from the
-                // bottom edge), so dragging back near home gives a satisfying
-                // click into place.
-                const defaultTop = ph * (1 - BOTTOM_PCT) - oh;
+                // dragged it (aligned with the bottom of YouTube's caption
+                // window when detectable, else BOTTOM_PCT fallback), so
+                // dragging back near home gives a satisfying click into place.
+                const defaultTop = getDefaultBottomY(player, ph) - oh;
                 if (Math.abs(newTop - defaultTop) < SNAP_PX) {
                     newTop = defaultTop;
                 }
@@ -487,6 +520,28 @@
         node.addEventListener('pointercancel', stopDrag);
     }
 
+    // Returns the player-local Y where the overlay's bottom edge should rest
+    // by default. We try to align with the bottom of YouTube's caption
+    // rendering area (.caption-window) so the overlay feels like it's
+    // *replacing* the captions rather than floating somewhere arbitrary.
+    // Falls back to the old BOTTOM_PCT-based estimate when we can't read
+    // the caption window (CC truly off, or first frame before YouTube has
+    // mounted the caption DOM).
+    function getDefaultBottomY(player, ph) {
+        const cw = player.querySelector('.caption-window');
+        if (cw) {
+            const r = cw.getBoundingClientRect();
+            if (r.height > 0) {
+                const pr = player.getBoundingClientRect();
+                const y = r.bottom - pr.top;
+                // Sanity-clamp to inside the player in case YouTube parks
+                // the caption window somewhere unexpected.
+                if (y > 0 && y <= ph) return y;
+            }
+        }
+        return ph * (1 - BOTTOM_PCT);
+    }
+
     // ---------- Positioning + responsive sizing ----------
     // The overlay's natural size is fixed (FONT_PX). On-screen size is set with
     // CSS transform: scale(N), where N grows with player height (theater /
@@ -500,6 +555,10 @@
     // style.top are in player-local coords (px from the player's top-left).
     function positionOverlay() {
         if (!overlayEl || !enabled) return;
+        // On Shorts, hide and bail. Overlay re-shows on next nav back to a
+        // regular watch page (the periodic schedulePosition tick picks it up).
+        if (isShortsPath()) { overlayEl.style.display = 'none'; return; }
+        if (overlayEl.style.display === 'none') overlayEl.style.display = 'block';
         const player = ensureMounted();
         if (!player) return;
         const pw = player.clientWidth;
@@ -535,7 +594,7 @@
         // Auto-anchor: bottom-center of the un-scaled layout box at this point
         // (transform-origin keeps the visual bottom-center pinned here too).
         const cx = pw / 2;
-        const cy = ph * (1 - BOTTOM_PCT);
+        const cy = getDefaultBottomY(player, ph);
         overlayEl.style.left = Math.round(cx - ow / 2) + 'px';
         overlayEl.style.top  = Math.round(cy - oh)     + 'px';
     }
@@ -765,7 +824,7 @@
         if (hidden) {
             if (hideStyleEl) return;
             hideStyleEl = document.createElement('style');
-            hideStyleEl.id = 'spritz-hide-cc';
+            hideStyleEl.id = 'rivet-hide-cc';
             hideStyleEl.textContent =
                 '.ytp-caption-window-container{opacity:0!important;pointer-events:none!important;}';
             document.head.appendChild(hideStyleEl);
@@ -807,7 +866,7 @@
     });
 
     // Expose programmatic hooks (handy for debugging / future Chrome extension popup)
-    window.__spritz = {
+    window.__rivet = {
         toggle: () => { setEnabled(!enabled); return enabled; },
         on:     () => setEnabled(true),
         off:    () => setEnabled(false),

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Speed Reader",
-  "version": "0.10.10",
-  "description": "Read YouTube captions one word at a time, RSVP-style with ORP highlighting.",
+  "name": "Rivet — YouTube speed reader",
+  "version": "0.11.0",
+  "description": "RSVP-style YouTube caption reader. Rivet pins the optimal-recognition-point letter in red so your eyes stay anchored.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

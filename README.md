@@ -1,4 +1,4 @@
-# YouTube Speed Reader — Chrome extension
+# Rivet — YouTube speed reader (Chrome extension)
 
 RSVP-style reader that overlays the current word on YouTube videos with the
 ORP (optimal recognition point) letter highlighted. Reads from YouTube's
@@ -40,7 +40,7 @@ In Chrome (one time only):
   • Click **Load unpacked**
   • Select `dist/dev/`
 
-You'll see "YouTube RSVP Reader (dev)" appear. The "(dev)" suffix and an
+You'll see "Rivet — YouTube speed reader (dev)" appear. The "(dev)" suffix and an
 extra service worker are the only differences from the production build.
 
 Now edit `src/content.js` (or any other file in `src/`). Within ~2-4 seconds
@@ -89,7 +89,7 @@ Nothing is sent to any server.
 
 ## Privacy policy template
 
-> [Name] does not collect, transmit, or sell any user data. The extension
+> Rivet does not collect, transmit, or sell any user data. The extension
 > reads the closed-caption text already shown on YouTube's video player to
 > render it as a single-word RSVP display, and stores user preferences
 > (overlay enabled state, font size, CC visibility, position) only in the
