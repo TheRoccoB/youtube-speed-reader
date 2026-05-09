@@ -7,7 +7,7 @@
 
     // ============== CONFIG ==============
     const NAME             = 'Rivet';
-    const VERSION          = '0.11.0';
+    const VERSION          = '0.11.1';
     const STORAGE_KEYS = {
         enabled: 'rivet-enabled',
         cc:      'rivet-cc-visible',
@@ -303,9 +303,10 @@
     }
 
     function buildOpenButton() {
-        // Clickable badge in the player's top-right. Shows the abc/red-b mini-
-        // overlay preview alongside a "Rivet" word-mark — visible enough that
-        // first-time visitors notice and click it.
+        // Clickable badge in the player's top-right. Word-mark version of the
+        // overlay's own styling: monospace "Rivet" with the middle letter in
+        // ORP red — same visual grammar as the in-overlay word display, so
+        // it doubles as a preview of what clicking it does.
         // Visibility is controlled by injected CSS — opacity here is just the
         // initial value before the stylesheet attaches.
         const b = el('button', `
@@ -315,33 +316,26 @@
             background: rgba(0,0,0,0.85);
             border: 1px solid rgba(255,255,255,0.55);
             color: #fff;
-            font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-            font-size: 14px; font-weight: 700; line-height: 1;
-            padding: 7px 11px;
+            font-family: ui-monospace, 'SF Mono', Menlo, 'Courier New', monospace;
+            font-size: 18px; font-weight: 700; line-height: 1;
+            letter-spacing: 0.04em;
+            padding: 9px 14px;
             border-radius: 5px;
             cursor: pointer;
             user-select: none;
-            display: flex; align-items: center; justify-content: center; gap: 8px;
+            display: inline-flex; align-items: center; justify-content: center;
             pointer-events: auto;
             box-shadow: 0 2px 8px rgba(0,0,0,0.4);
             transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
         `);
         b.id = 'rivet-open-btn';
         b.title = 'Open ' + NAME;
-        // The "abc"/red-b mini-overlay preview.
-        const abc = el('span', 'display:inline-flex; gap:0;');
-        abc.appendChild(el('span', 'opacity:0.85;', 'a'));
-        abc.appendChild(el('span', `color:${ORP_COLOR};`, 'b'));
-        abc.appendChild(el('span', 'opacity:0.85;', 'c'));
-        b.appendChild(abc);
-        // Word-mark: the brand name next to the icon. Different font / weight
-        // so it reads as a label rather than part of the icon glyphs.
-        const label = el('span', `
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-            font-size: 13px; font-weight: 600; letter-spacing: 0.01em;
-            opacity: 0.95;
-        `, 'Rivet');
-        b.appendChild(label);
+        // Stylized "Rivet" — middle letter (v) in red as the ORP cue.
+        b.appendChild(el('span', 'opacity:0.9;', 'R'));
+        b.appendChild(el('span', 'opacity:0.9;', 'i'));
+        b.appendChild(el('span', `color:${ORP_COLOR};`, 'v'));
+        b.appendChild(el('span', 'opacity:0.9;', 'e'));
+        b.appendChild(el('span', 'opacity:0.9;', 't'));
         b.addEventListener('mouseenter', () => {
             b.style.background   = 'rgba(0,0,0,0.95)';
             b.style.borderColor  = ORP_COLOR;

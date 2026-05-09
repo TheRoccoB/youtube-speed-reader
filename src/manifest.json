@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rivet — YouTube speed reader",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "RSVP-style YouTube caption reader. Rivet pins the optimal-recognition-point letter in red so your eyes stay anchored.",
   "icons": {
     "16": "icons/icon16.png",
