@@ -7,7 +7,7 @@
 
     // ============== CONFIG ==============
     const NAME             = 'Rivet';
-    const VERSION          = '0.13.5';
+    const VERSION          = '0.13.6';
     const STORAGE_KEYS = {
         enabled:    'rivet-enabled',
         cc:         'rivet-cc-visible',
@@ -545,11 +545,18 @@
             // hovered, so the invisible/0-opacity label doesn't intercept
             // clicks meant for the underlying video.
             versionEl.style.pointerEvents = 'auto';
+            // Reveal the (!) badge with the rest of the chrome. Only if
+            // updateWarnBtn has decided we should be showing it — display
+            // stays 'none' when there's nothing to communicate.
+            if (warnBtnEl && warnBtnEl.style.display !== 'none') {
+                warnBtnEl.style.opacity = (manualWarnAck || rivetAutoSwitched) ? '0.6' : '1';
+            }
         });
         root.addEventListener('mouseleave', () => {
             ctrlBox.style.opacity = '0';
             versionEl.style.opacity = '0';
             versionEl.style.pointerEvents = 'none';
+            if (warnBtnEl) warnBtnEl.style.opacity = '0';
         });
 
         // Block clicks / double-clicks from reaching the underlying video
@@ -736,6 +743,7 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
             font-weight: 700; line-height: 1;
             display: none;
+            opacity: 0; transition: opacity 0.12s ease;
             align-items: center; justify-content: center;
             box-sizing: border-box;
         `);
@@ -934,7 +942,6 @@
             warnBtnEl.style.border       = '1px solid rgba(255,255,255,0.7)';
             warnBtnEl.style.borderRadius = '50%';
             warnBtnEl.style.animation    = 'rivet-warn-pulse 1.8s ease-in-out infinite';
-            warnBtnEl.style.opacity      = '1';
         } else {
             // Muted: small gray dot the user can still click for the popup.
             warnBtnEl.style.width        = '14px';
@@ -945,8 +952,10 @@
             warnBtnEl.style.border       = '1px solid rgba(255,255,255,0.25)';
             warnBtnEl.style.borderRadius = '50%';
             warnBtnEl.style.animation    = '';
-            warnBtnEl.style.opacity      = '0.6';
         }
+        // Opacity is hover-driven (set by the overlay's mouseenter/leave
+        // handlers) so the badge fades in with the rest of the controls and
+        // doesn't sit permanently on top of the word.
         if (warnPopupEl && warnPopupEl.style.display === 'block') renderWarnPopup();
     }
 
