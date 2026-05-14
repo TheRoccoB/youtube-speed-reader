@@ -158,6 +158,36 @@ generated captions are a workaround until it's solved.
 
 ## Recent work (newest first)
 
+  - 0.13.5  Page-context probe (`src/probe.js`, loaded via
+            `web_accessible_resources`) calls `player.getOption(
+            'captions','track' / 'tracklist',{includeAsr:1})` for
+            authoritative caption-track detection. When manual
+            captions are detected AND an ASR track exists in the
+            same base language (e.g. `es-MX` manual ↔ `es` ASR),
+            Rivet **auto-switches** to ASR for smoother pacing.
+            The first auto-switch ever opens an explainer popup
+            (persisted ack: `rivet-manual-warn-ack` /
+            `rivet-auto-switch-ack`); subsequent ones are silent
+            with a small muted (!) dot so the user can revert.
+            All probe ↔ content-script chatter goes over
+            `window.postMessage` with an `e.origin` gate (the
+            `e.source !== window` identity check is broken
+            across content-script isolated worlds). Auto-switch
+            is deferred until Rivet is actually enabled, and is
+            scoped to `location.pathname === '/watch'` so we
+            don't touch channel/home/search previews. Heuristic
+            (chunk-pattern) stays as fallback when the probe
+            can't reach the player API.
+            Plus: drag-snap reset returns the overlay to dynamic
+            auto-anchor mode; default position aligns with
+            `.caption-window` bottom; popup positions above the
+            overlay when it'd otherwise overflow the player;
+            bottom-right version label is now a link to
+            `rivet.simmerindustries.com`.
+  - 0.12.0  (!) badge for manual captions + return-to-auto-anchor
+            when user drags back to the home position (both axes
+            snapped). Heuristic uses chunk-count + absence of
+            single-word mutations to reduce false positives.
   - 0.11.0  Rebranded to "Rivet"; manifest name now
             "Rivet — YouTube speed reader". Internal symbols (class
             names, IDs, localStorage keys, globals) all renamed

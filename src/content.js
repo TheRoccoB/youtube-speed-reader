@@ -7,11 +7,13 @@
 
     // ============== CONFIG ==============
     const NAME             = 'Rivet';
-    const VERSION          = '0.11.1';
+    const VERSION          = '0.13.5';
     const STORAGE_KEYS = {
-        enabled: 'rivet-enabled',
-        cc:      'rivet-cc-visible',
-        scale:   'rivet-scale',
+        enabled:    'rivet-enabled',
+        cc:         'rivet-cc-visible',
+        scale:      'rivet-scale',
+        manualAck:  'rivet-manual-warn-ack',
+        autoSwAck:  'rivet-auto-switch-ack',
     };
     const DEFAULT_SCALE_FACTOR = 1.25;     // about two `+` clicks above 1.0
     const TOGGLE_KEY       = 'S';    // Shift + this key toggles overlay on/off
@@ -85,12 +87,82 @@
         return (isFinite(v) && v >= 0.4 && v <= 5.0) ? v : null;
     }
     function storeScale(v)          { lsSet(STORAGE_KEYS.scale, String(v)); }
+    function loadStoredManualAck()  { return lsGet(STORAGE_KEYS.manualAck) === '1'; }
+    function storeManualAck(on)     { lsSet(STORAGE_KEYS.manualAck, on ? '1' : '0'); }
+    function loadStoredAutoSwAck()  { return lsGet(STORAGE_KEYS.autoSwAck) === '1'; }
+    function storeAutoSwAck(on)     { lsSet(STORAGE_KEYS.autoSwAck, on ? '1' : '0'); }
+
+    // Debug logger — silent in normal operation; enable from the page console:
+    //   localStorage.setItem('rivet-debug', '1'); location.reload();
+    // Disable with: localStorage.removeItem('rivet-debug');
+    function dbg() {
+        if (lsGet('rivet-debug') !== '1') return;
+        const args = Array.prototype.slice.call(arguments);
+        // eslint-disable-next-line no-console
+        console.log.apply(console, ['[Rivet]'].concat(args));
+    }
+
+    // Authoritative caption-track state from probe.js (page-context script
+    // that calls player.getOption). Null until the probe responds.
+    //   - trackKind: 'asr' (auto-generated), 'manual' (editor-uploaded), or null
+    //   - availableTracks: array of {languageCode, kind?, ...} from
+    //     player.getOption('captions','tracklist')
+    //   - originalTrackBeforeSwitch: snapshot of the track we replaced
+    //     when the user clicked "Switch to auto-generated", so we can
+    //     offer a "Switch back" affordance.
+    //   - rivetAutoSwitched: true after we've called setOption to swap
+    //     tracks; keeps the (!) badge present (muted) so user can revert.
+    let trackKind                  = null;
+    let availableTracks            = [];
+    let originalTrackBeforeSwitch  = null;
+    let rivetAutoSwitched          = false;
+    let probeReady                 = false;
+    // Per-video latch: true once we've evaluated/attempted an auto-switch
+    // for the current video so the polling cycle doesn't keep re-firing it.
+    let autoSwitchAttempted        = false;
+    // Set when an auto-switch fires AND the user has never been shown the
+    // explanation popup. Consumed by the 'switched' handler to auto-open
+    // the popup once; cleared after.
+    let pendingAutoExplain         = false;
+    // Persisted: has the user ever been shown the "Rivet auto-switched"
+    // explanation? After yes, subsequent auto-switches stay silent.
+    let autoSwitchEverExplained    = false;
+
+    // Set true once we're confident this video is using manual / pro-uploaded
+    // captions (drives the (!) badge). The probe's authoritative answer
+    // overrides this when available; otherwise we fall back to the chunk-
+    // pattern heuristic below.
+    let manualCaptionsDetected = false;
+    // Counters fed by every caption mutation; the heuristic uses both.
+    //
+    // Why both?
+    //   - A *single* >=CHUNK_THRESHOLD mutation is NOT enough — auto-captions
+    //     often deliver the first cue of a video as a 3-6 word group.
+    //   - Pure manual captions NEVER emit single-word mutations (always
+    //     full sentences). So singleWordChunks == 0 is a strong "manual"
+    //     signal once we've also seen multi-word chunks.
+    //   - As a fast-path, a *very* large chunk (>=8 words) is almost
+    //     certainly manual — auto-captions rarely arrive that much at once.
+    //
+    // Reset per video (SPA nav) so a manual video followed by an auto-
+    // captioned video gets reclassified.
+    let singleWordChunks = 0;
+    let multiWordChunks  = 0;
+    const MANUAL_LARGE_CHUNK    = 8;   // 1 chunk this big => manual
+    const MANUAL_REPEAT_CHUNKS  = 2;   // 2+ multi-word chunks AND no singles => manual
+    // Has the user clicked the (!) badge at least once? Persisted, so they
+    // only see the prominent version on first encounter ever.
+    let manualWarnAck = false;
+    let warnBtnEl     = null;
+    let warnPopupEl   = null;
 
     // Hydrate state from storage now that the helpers are defined.
     {
         const storedScale = loadStoredScale();
-        scaleFactor = (storedScale != null) ? storedScale : DEFAULT_SCALE_FACTOR;
-        ccVisible   = loadStoredCcVisible();
+        scaleFactor      = (storedScale != null) ? storedScale : DEFAULT_SCALE_FACTOR;
+        ccVisible        = loadStoredCcVisible();
+        manualWarnAck             = loadStoredManualAck();
+        autoSwitchEverExplained   = loadStoredAutoSwAck();
     }
 
     // ---------- DOM helpers (no innerHTML — YouTube enforces Trusted Types) ----------
@@ -100,6 +172,202 @@
         if (text != null) e.textContent = text;
         return e;
     }
+
+    // ---------- Probe bridge (page-context player API) ----------
+    // probe.js runs in the page world (loaded via web_accessible_resources)
+    // so it can call player.getOption / setOption. We talk to it via
+    // window.postMessage. See src/probe.js for the other side.
+    function injectProbe() {
+        if (document.getElementById('rivet-probe-script')) return;
+        try {
+            const s = document.createElement('script');
+            s.id = 'rivet-probe-script';
+            s.src = chrome.runtime.getURL('probe.js');
+            // Remove the tag once it's run; the script's effect persists on
+            // the page's window object (window.__rivetProbeInstalled), so we
+            // don't need the DOM node hanging around.
+            s.onload = () => { try { s.remove(); } catch (_) {} };
+            (document.head || document.documentElement).appendChild(s);
+        } catch (_) { /* extension URL unavailable in some test contexts */ }
+    }
+
+    function probeSend(op, extra) {
+        try {
+            const msg = Object.assign({ source: 'rivet-cs', op: op }, extra || {});
+            window.postMessage(msg, '*');
+        } catch (_) {}
+    }
+
+    function requestTrackInfo() { probeSend('getTrackInfo'); }
+
+    // Reconcile state with the probe's snapshot. Authoritative when present.
+    function applyTrackSnapshot(snap) {
+        if (!snap) return;
+        const cur = snap.current || null;
+        availableTracks = Array.isArray(snap.available) ? snap.available : [];
+        // The probe sometimes reports current as `{}` before the player has
+        // selected a track (most often on the very first 'ready' message,
+        // before the user has enabled captions). Empty object → unknown, NOT
+        // manual — otherwise we'd auto-switch on every page load even before
+        // the user opens Rivet.
+        if (cur && typeof cur === 'object' && cur.languageCode) {
+            trackKind = cur.kind === 'asr' ? 'asr' : 'manual';
+        } else {
+            trackKind = null;
+        }
+        dbg('snapshot', { trackKind: trackKind, listLen: availableTracks.length, currentLang: cur && cur.languageCode });
+        updateWarnBtn();
+        // Once we have authoritative track info, see if we should silently
+        // upgrade the user to the auto-generated track. No-op if already
+        // attempted this video, or if no matching ASR track exists.
+        maybeAutoSwitch();
+    }
+
+    // Compare language codes treating regional variants as equivalent. The
+    // manual track on a US-English video reports 'en-US' while the ASR
+    // track reports the bare 'en' — those ought to match for our purposes.
+    function langBase(code) {
+        if (!code) return '';
+        return String(code).split(/[-_]/)[0].toLowerCase();
+    }
+
+    // The track object passed to setOption needs to be one of the entries
+    // we got from tracklist (YouTube's player compares by identity / shape).
+    // Match on (base) language AND kind='asr' so we don't accidentally pick
+    // a different language.
+    function findAsrTrackFor(currentTrack, tracks) {
+        if (!tracks || !tracks.length) return null;
+        const lang = currentTrack && langBase(currentTrack.languageCode);
+        if (lang) {
+            const sameLang = tracks.find(t => t && t.kind === 'asr' && langBase(t.languageCode) === lang);
+            if (sameLang) return sameLang;
+        }
+        return tracks.find(t => t && t.kind === 'asr') || null;
+    }
+
+    function switchToAsr() {
+        // Need a current track to remember (for revert) and a tracklist to
+        // search. If either is missing, just bail — the popup will continue
+        // to show the explanation without a switch button.
+        const tracks = availableTracks;
+        const target = findAsrTrackFor(originalTrackBeforeSwitch || lastCurrentTrack(), tracks);
+        if (!target) return;
+        originalTrackBeforeSwitch = lastCurrentTrack();
+        rivetAutoSwitched = true;
+        probeSend('switchToTrack', { track: target });
+    }
+
+    // Default behavior: when the probe authoritatively reports that the
+    // current track is manual AND an ASR track exists in the same base
+    // language, switch automatically. Latched per video by
+    // autoSwitchAttempted so the polling loop doesn't keep re-firing this.
+    function maybeAutoSwitch() {
+        if (autoSwitchAttempted) { dbg('maybeAutoSwitch: skip (already attempted)'); return; }
+        // Don't touch the user's captions until they're actually using Rivet.
+        // Firing earlier (e.g. on page load) would mutate their CC selection
+        // even on pages they never engaged with the overlay on.
+        if (!enabled) { dbg('maybeAutoSwitch: skip (Rivet not enabled yet)'); return; }
+        if (trackKind !== 'manual') { dbg('maybeAutoSwitch: skip (trackKind=', trackKind, ')'); return; }
+        if (rivetAutoSwitched) { dbg('maybeAutoSwitch: skip (already switched)'); return; }
+        const target = findAsrTrackFor(lastCurrentTrack(), availableTracks);
+        if (!target) { dbg('maybeAutoSwitch: skip (no matching ASR track in list of', availableTracks.length, ')'); return; }
+        autoSwitchAttempted = true;
+        // First-time auto-switch surface: queue the popup to open once the
+        // probe confirms the swap landed. After the user dismisses it, the
+        // ack persists and all future auto-switches happen silently.
+        if (!autoSwitchEverExplained) pendingAutoExplain = true;
+        originalTrackBeforeSwitch = lastCurrentTrack();
+        rivetAutoSwitched = true;
+        dbg('maybeAutoSwitch: switching to', target.languageCode, target.kind, 'pendingExplain=', pendingAutoExplain);
+        probeSend('switchToTrack', { track: target });
+    }
+
+    function revertTrackSwitch() {
+        if (!originalTrackBeforeSwitch) return;
+        probeSend('switchToTrack', { track: originalTrackBeforeSwitch });
+        rivetAutoSwitched = false;
+        originalTrackBeforeSwitch = null;
+    }
+
+    // The "current track" we remember between probe round-trips. We can't
+    // store the full snapshot mutably without race conditions, but for the
+    // ASR-match heuristic we just need the languageCode of whatever the
+    // probe most recently reported.
+    let _lastCurrentTrack = null;
+    function lastCurrentTrack() { return _lastCurrentTrack; }
+
+    window.addEventListener('message', (e) => {
+        // Don't compare e.source to window — content scripts run in an
+        // isolated world, so the page's Window proxy and this script's
+        // `window` ref point to the same frame but are NOT === equal. That
+        // identity check silently dropped every probe message. We gate on
+        // origin (same-document only) and on our message tag instead.
+        if (e.origin && e.origin !== location.origin) return;
+        const m = e.data;
+        if (!m || m.source !== 'rivet-probe') return;
+        if (lsGet('rivet-debug') === '1') {
+            let s;
+            try { s = JSON.stringify(m.data); } catch (_) { s = '<unstringifiable>'; }
+            // eslint-disable-next-line no-console
+            console.log('[Rivet cs] ←', m.op, s);
+        }
+        switch (m.op) {
+            case 'ready':
+                probeReady = true;
+                if (m.data) {
+                    _lastCurrentTrack = m.data.current || null;
+                    applyTrackSnapshot(m.data);
+                }
+                break;
+            case 'trackInfo':
+                if (m.data) {
+                    _lastCurrentTrack = m.data.current || null;
+                    applyTrackSnapshot(m.data);
+                }
+                break;
+            case 'switched': {
+                const newSnap = m.data && m.data.snapshot;
+                if (newSnap) {
+                    _lastCurrentTrack = newSnap.current || null;
+                    applyTrackSnapshot(newSnap);
+                }
+                // Verify the switch actually landed. setOption sometimes
+                // reports ok=true but the player ignored it (e.g. track
+                // identity mismatch). Roll back our optimistic flags if so.
+                if (rivetAutoSwitched && trackKind !== 'asr') {
+                    rivetAutoSwitched = false;
+                    originalTrackBeforeSwitch = null;
+                    pendingAutoExplain = false;
+                    updateWarnBtn();
+                    break;
+                }
+                // After swapping tracks, YouTube sometimes drops caption
+                // visibility (or restarts the caption-window element). Give
+                // the player a moment to settle, then make sure CC is back
+                // on and our hide preference is reapplied so the user's
+                // CC-toggle state stays consistent across the swap.
+                if (rivetAutoSwitched && trackKind === 'asr' && enabled) {
+                    setTimeout(() => {
+                        if (!enabled) return;
+                        ensureCaptionsOn();
+                        setNativeCcHidden(!ccVisible);
+                    }, 300);
+                }
+                // First successful auto-switch ever → open the explainer
+                // popup once so the user knows what just happened and how to
+                // revert. Persisted ack means we stay quiet next time.
+                if (pendingAutoExplain && rivetAutoSwitched && trackKind === 'asr') {
+                    renderWarnPopup();
+                    if (warnPopupEl) warnPopupEl.style.display = 'block';
+                    pendingAutoExplain = false;
+                    autoSwitchEverExplained = true;
+                    storeAutoSwAck(true);
+                }
+                renderWarnPopup();
+                break;
+            }
+        }
+    });
 
     function buildOverlay() {
         // Tight padding — the box is sized just around the word. The +/- and
@@ -211,28 +479,77 @@
         updateCcBtnVisual();           // reflect persisted state on the button
         root.appendChild(ctrlBox);
 
-        // Name + version label floating over the bottom-right corner.
-        // Hover-revealed (the controls and this label fade in together).
-        const versionEl = el('span', `
+        // Manual-caption warning badge — top-left of the overlay, always visible
+        // once we detect chunk-mode captions (no hover required). Prominent
+        // (pulsing red) until the user clicks it once, then permanently muted
+        // (small gray dot) per user preference. See updateWarnBtn().
+        ensureWarnKeyframes();
+        warnBtnEl = buildWarnButton();
+        warnPopupEl = buildWarnPopup();
+        warnBtnEl.addEventListener('mousedown', e => e.stopPropagation());
+        warnBtnEl.addEventListener('click', e => {
+            const showing = warnPopupEl.style.display === 'block';
+            if (!showing) renderWarnPopup();
+            warnPopupEl.style.display = showing ? 'none' : 'block';
+            if (!manualWarnAck) {
+                manualWarnAck = true;
+                storeManualAck(true);
+                updateWarnBtn();
+            }
+            e.stopPropagation();
+        });
+        root.appendChild(warnBtnEl);
+        root.appendChild(warnPopupEl);
+        updateWarnBtn();
+
+
+        // Name + version label, hover-revealed in the bottom-right corner.
+        // Clickable: opens the Rivet marketing site in a new tab. Hover
+        // gives it a subtle underline + brighter opacity to advertise the
+        // link affordance, since the badge is otherwise visually understated.
+        const versionEl = el('a', `
             position: absolute;
             bottom: 3px; right: 8px;
             font-family: system-ui, sans-serif;
             font-size: 10px; line-height: 1;
+            color: #fff;
+            text-decoration: none;
             opacity: 0; transition: opacity 0.12s ease;
             user-select: none;
             pointer-events: none;
             text-shadow: 0 0 3px rgba(0,0,0,0.9);
             white-space: nowrap;
+            cursor: pointer;
         `, NAME + ' v' + VERSION);
+        versionEl.href = 'https://rivet.simmerindustries.com/';
+        versionEl.target = '_blank';
+        versionEl.rel = 'noopener noreferrer';
+        // Drag handler swallows clicks via mousedown on root, but the link's
+        // own click needs to fire so the navigation happens. Don't propagate.
+        // Drag handler attaches to pointerdown on root and calls
+        // preventDefault, which kills the link's subsequent click event. Stop
+        // propagation at the source so the drag handler never sees pointer
+        // events that started on the link.
+        versionEl.addEventListener('pointerdown', e => e.stopPropagation());
+        versionEl.addEventListener('pointerup',   e => e.stopPropagation());
+        versionEl.addEventListener('mousedown',   e => e.stopPropagation());
+        versionEl.addEventListener('click',       e => e.stopPropagation());
+        versionEl.addEventListener('mouseenter', () => { versionEl.style.textDecoration = 'underline'; versionEl.style.opacity = '1'; });
+        versionEl.addEventListener('mouseleave', () => { versionEl.style.textDecoration = 'none'; versionEl.style.opacity = '0.6'; });
         root.appendChild(versionEl);
 
         root.addEventListener('mouseenter', () => {
             ctrlBox.style.opacity = '1';
             versionEl.style.opacity = '0.6';
+            // Re-enable the link's pointer-events only while the overlay is
+            // hovered, so the invisible/0-opacity label doesn't intercept
+            // clicks meant for the underlying video.
+            versionEl.style.pointerEvents = 'auto';
         });
         root.addEventListener('mouseleave', () => {
             ctrlBox.style.opacity = '0';
             versionEl.style.opacity = '0';
+            versionEl.style.pointerEvents = 'none';
         });
 
         // Block clicks / double-clicks from reaching the underlying video
@@ -268,12 +585,13 @@
         return player;
     }
 
-    // YouTube Shorts uses a vertical-video player at /shorts/<id>. The
-    // captions there are different (often burnt-in or repositioned) and the
-    // RSVP overlay doesn't make sense over a 60-second clip — so we suppress
-    // both the overlay and the open button when the user is on a Shorts URL.
-    function isShortsPath() {
-        return location.pathname.startsWith('/shorts/');
+    // Rivet only makes sense on the canonical watch page (/watch?v=…).
+    // Channel pages, search results, the home feed, and YouTube Shorts all
+    // mount their own player elements (often auto-playing previews), but
+    // none of those are real "watching" contexts and we shouldn't drop an
+    // overlay onto them.
+    function isWatchPath() {
+        return location.pathname === '/watch';
     }
 
     // Inject a stylesheet for the open button: hidden by default, shown only
@@ -359,8 +677,9 @@
     // is enabled — so the open button doesn't appear on top of the overlay.
     function updateOpenButtonVisibility() {
         if (!openButtonEl) return;
-        // On Shorts, force-hide regardless of enabled state.
-        if (isShortsPath() || enabled) openButtonEl.setAttribute('data-hide', '1');
+        // Force-hide on any non-watch page — channel/home/search/shorts all
+        // mount preview players, but we don't want the badge appearing there.
+        if (!isWatchPath() || enabled) openButtonEl.setAttribute('data-hide', '1');
         else                           openButtonEl.removeAttribute('data-hide');
     }
 
@@ -400,6 +719,235 @@
         b.addEventListener('mouseenter', () => b.style.background = 'rgba(255,255,255,0.25)');
         b.addEventListener('mouseleave', () => b.style.background = 'rgba(0,0,0,0.55)');
         return b;
+    }
+
+    // Manual-caption (!) badge — see buildOverlay for the click wiring.
+    // Two visual states driven by updateWarnBtn():
+    //   - prominent: red bg, pulsing — first time the user sees it
+    //   - muted: small gray dot — after they've acknowledged with one click
+    function buildWarnButton() {
+        const b = el('button', `
+            position: absolute;
+            top: 4px; left: 4px;
+            z-index: 11;
+            padding: 0; margin: 0;
+            cursor: pointer;
+            user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+            font-weight: 700; line-height: 1;
+            display: none;
+            align-items: center; justify-content: center;
+            box-sizing: border-box;
+        `);
+        b.setAttribute('aria-label', 'Manual captions detected — info');
+        b.title = 'Manual captions detected — click for info';
+        b.textContent = '!';
+        return b;
+    }
+
+    function buildWarnPopup() {
+        // Empty container; renderWarnPopup() populates body based on state.
+        // Default is "above the overlay" since the overlay is bottom-anchored
+        // by default and a downward popup would overflow the player. The
+        // positionWarnPopup() helper flips to "below" if the overlay was
+        // dragged near the top of the player.
+        return el('div', `
+            position: absolute;
+            left: 4px;
+            bottom: calc(100% + 6px);
+            z-index: 12;
+            width: 240px;
+            padding: 9px 11px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.95);
+            color: #f5f5f7;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+            font-size: 11px; line-height: 1.4;
+            font-weight: 400;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.18);
+            display: none;
+            pointer-events: auto;
+            text-align: left;
+        `);
+    }
+
+    // Choose "above" vs "below" the overlay depending on which side has more
+    // room inside the player. Falls back to "above" when measurements aren't
+    // available — that's the right default for the standard bottom-anchored
+    // overlay placement.
+    function positionWarnPopup() {
+        if (!warnPopupEl || !overlayEl) return;
+        const player = overlayEl.parentElement;
+        if (!player) return;
+        const ov = overlayEl.getBoundingClientRect();
+        const pl = player.getBoundingClientRect();
+        if (!ov.height || !pl.height) return;
+        const spaceAbove = ov.top    - pl.top;
+        const spaceBelow = pl.bottom - ov.bottom;
+        if (spaceAbove >= spaceBelow) {
+            warnPopupEl.style.top    = '';
+            warnPopupEl.style.bottom = 'calc(100% + 6px)';
+        } else {
+            warnPopupEl.style.top    = '26px';
+            warnPopupEl.style.bottom = '';
+        }
+    }
+
+    function makePopupButton(text) {
+        return el('button', `
+            display: block;
+            margin-top: 8px;
+            padding: 5px 9px;
+            background: ${ORP_COLOR};
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 4px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        `, text);
+    }
+
+    function makePopupCloseX() {
+        const x = el('button', `
+            position: absolute;
+            top: 2px; right: 4px;
+            width: 16px; height: 16px;
+            padding: 0; margin: 0;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            color: rgba(255,255,255,0.55);
+            font: 700 14px/1 system-ui;
+            line-height: 16px;
+        `, '×');
+        x.title = 'Dismiss';
+        x.addEventListener('mouseenter', () => { x.style.color = '#fff'; });
+        x.addEventListener('mouseleave', () => { x.style.color = 'rgba(255,255,255,0.55)'; });
+        return x;
+    }
+
+    // Rebuild the popup body from current state. Called whenever the popup is
+    // about to be shown, and whenever the underlying state changes while the
+    // popup is open (e.g. probe responds with track info; we switched).
+    function renderWarnPopup() {
+        if (!warnPopupEl) return;
+        positionWarnPopup();
+        while (warnPopupEl.firstChild) warnPopupEl.removeChild(warnPopupEl.firstChild);
+
+        // Universal dismiss control — the (!) badge can also toggle it,
+        // but a × in the corner is more discoverable.
+        const closeX = makePopupCloseX();
+        closeX.addEventListener('mousedown', e => e.stopPropagation());
+        closeX.addEventListener('click', e => {
+            warnPopupEl.style.display = 'none';
+            e.stopPropagation();
+        });
+        warnPopupEl.appendChild(closeX);
+
+        // Variant A: we auto-switched (or user manually clicked to switch).
+        if (rivetAutoSwitched) {
+            warnPopupEl.appendChild(el('div', 'padding-right: 14px;',
+                'Rivet switched to auto-generated captions for smoother pacing. The original ("pre-written") captions are still available on this video.'));
+            const back = makePopupButton('Switch back to original');
+            back.addEventListener('mousedown', e => e.stopPropagation());
+            back.addEventListener('click', e => {
+                revertTrackSwitch();
+                e.stopPropagation();
+            });
+            warnPopupEl.appendChild(back);
+            return;
+        }
+
+        // Variant B: manual captions, no ASR available (or no match for
+        // current language). Tell the user why pacing might feel uneven.
+        warnPopupEl.appendChild(el('div', 'padding-right: 14px;',
+            "This video uses pre-written captions, which arrive as full sentences instead of word-by-word. Rivet's pacing can feel uneven here."));
+
+        const asr = findAsrTrackFor(lastCurrentTrack(), availableTracks);
+        if (asr) {
+            // Edge case: API hasn't auto-switched yet (or user reverted and
+            // is now reconsidering). Still offer a manual switch button.
+            const btn = makePopupButton('Switch to auto-generated');
+            btn.addEventListener('mousedown', e => e.stopPropagation());
+            btn.addEventListener('click', e => {
+                switchToAsr();
+                e.stopPropagation();
+            });
+            warnPopupEl.appendChild(btn);
+        } else {
+            warnPopupEl.appendChild(el('div', 'margin-top: 6px; opacity: 0.7;',
+                "No auto-generated track was found for this language."));
+        }
+    }
+
+    let warnKeyframesInjected = false;
+    function ensureWarnKeyframes() {
+        if (warnKeyframesInjected) return;
+        warnKeyframesInjected = true;
+        const s = document.createElement('style');
+        s.id = 'rivet-warn-keyframes';
+        s.textContent = `
+            @keyframes rivet-warn-pulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(255,68,68,0.65); }
+                50%      { box-shadow: 0 0 0 6px rgba(255,68,68,0); }
+            }
+        `;
+        document.head.appendChild(s);
+    }
+
+    // Whether the (!) badge should be visible at all.
+    //
+    // The authoritative answer is trackKind from the player API:
+    //   - 'asr'    → captions ARE auto-generated. Hide (unless we initiated
+    //                a switch — then keep the badge so user can revert).
+    //   - 'manual' → captions ARE pre-written. Show.
+    //   - null     → API hasn't answered yet. Fall back to the chunk-pattern
+    //                heuristic (manualCaptionsDetected).
+    function shouldShowWarnBadge() {
+        if (rivetAutoSwitched) return true;        // for the "switch back" affordance
+        if (trackKind === 'asr')    return false;
+        if (trackKind === 'manual') return true;
+        return manualCaptionsDetected;             // unknown → heuristic
+    }
+
+    function updateWarnBtn() {
+        if (!warnBtnEl) return;
+        if (!shouldShowWarnBadge()) {
+            warnBtnEl.style.display = 'none';
+            if (warnPopupEl) warnPopupEl.style.display = 'none';
+            return;
+        }
+        warnBtnEl.style.display = 'inline-flex';
+        // Muted state covers both "user acked" and "user clicked to switch
+        // tracks" — in both cases they've engaged with the badge already and
+        // we want it small/quiet but still clickable.
+        const muted = manualWarnAck || rivetAutoSwitched;
+        if (!muted) {
+            // Prominent: red disc, white !, pulsing halo.
+            warnBtnEl.style.width        = '20px';
+            warnBtnEl.style.height       = '20px';
+            warnBtnEl.style.fontSize     = '13px';
+            warnBtnEl.style.background   = ORP_COLOR;
+            warnBtnEl.style.color        = '#fff';
+            warnBtnEl.style.border       = '1px solid rgba(255,255,255,0.7)';
+            warnBtnEl.style.borderRadius = '50%';
+            warnBtnEl.style.animation    = 'rivet-warn-pulse 1.8s ease-in-out infinite';
+            warnBtnEl.style.opacity      = '1';
+        } else {
+            // Muted: small gray dot the user can still click for the popup.
+            warnBtnEl.style.width        = '14px';
+            warnBtnEl.style.height       = '14px';
+            warnBtnEl.style.fontSize     = '9px';
+            warnBtnEl.style.background   = 'rgba(255,255,255,0.18)';
+            warnBtnEl.style.color        = 'rgba(255,255,255,0.7)';
+            warnBtnEl.style.border       = '1px solid rgba(255,255,255,0.25)';
+            warnBtnEl.style.borderRadius = '50%';
+            warnBtnEl.style.animation    = '';
+            warnBtnEl.style.opacity      = '0.6';
+        }
+        if (warnPopupEl && warnPopupEl.style.display === 'block') renderWarnPopup();
     }
 
     // Sized to match the +/- buttons in height; slightly wider to fit "CC".
@@ -444,7 +992,31 @@
         let dragging = false, startX = 0, startY = 0, origLeft = 0, origTop = 0;
 
         const stopDrag = () => {
+            if (!dragging) return;
             dragging = false;
+
+            // If the user dropped at the home position on BOTH axes (i.e. the
+            // drag snapped to defaults), exit drag-mode entirely and return to
+            // auto-anchor — that way the overlay tracks YouTube's caption
+            // position dynamically again (controls reveal / hide, etc), rather
+            // than staying locked to the saved fractions.
+            const player = node.parentElement;
+            if (!player) return;
+            const pw = player.clientWidth;
+            const ph = player.clientHeight;
+            const ow = node.offsetWidth;
+            const oh = node.offsetHeight;
+            if (!pw || !ph) return;
+            const left = parseFloat(node.style.left) || 0;
+            const top  = parseFloat(node.style.top)  || 0;
+            const defaultLeft = pw / 2 - ow / 2;
+            const defaultTop  = getDefaultBottomY(player, ph) - oh;
+            if (Math.abs(left - defaultLeft) < 1 && Math.abs(top - defaultTop) < 1) {
+                userMovedOverlay = false;
+                userPosFracX = null;
+                userPosFracY = null;
+                schedulePosition();
+            }
         };
 
         node.addEventListener('pointerdown', (e) => {
@@ -549,9 +1121,9 @@
     // style.top are in player-local coords (px from the player's top-left).
     function positionOverlay() {
         if (!overlayEl || !enabled) return;
-        // On Shorts, hide and bail. Overlay re-shows on next nav back to a
-        // regular watch page (the periodic schedulePosition tick picks it up).
-        if (isShortsPath()) { overlayEl.style.display = 'none'; return; }
+        // Hide and bail on any non-watch page. Re-shows on next nav back to
+        // a real watch page (the periodic schedulePosition tick picks it up).
+        if (!isWatchPath()) { overlayEl.style.display = 'none'; return; }
         if (overlayEl.style.display === 'none') overlayEl.style.display = 'block';
         const player = ensureMounted();
         if (!player) return;
@@ -636,6 +1208,12 @@
         if (!enabled) return;
         const text = getCaptionText();
         if (text === lastCaptionText) return;
+        // If captions are flowing but we still don't have authoritative
+        // track info, nudge the probe — tracklist often becomes available
+        // only after the user has the CC track actively playing.
+        if (probeReady && trackKind === null) {
+            requestTrackInfo();
+        }
 
         const newWords = diffNewWords(lastCaptionText, text);
         lastCaptionText = text;
@@ -685,6 +1263,24 @@
         }
         wordQueue = newWords.map(w => ({ word: w, durMs: perWord }));
         if (displayTimer) { clearTimeout(displayTimer); displayTimer = null; }
+
+        // Update chunk-pattern counters and re-evaluate the manual-captions
+        // heuristic. See the declarations of singleWordChunks / multiWordChunks
+        // for the rationale — short version: auto-captions can occasionally
+        // arrive as small chunks but ALWAYS produce singles too, while manual
+        // captions never produce singles.
+        if (newWords.length === 1) singleWordChunks++;
+        if (newWords.length >= CHUNK_THRESHOLD) multiWordChunks++;
+        if (!manualCaptionsDetected) {
+            const veryLargeChunk = newWords.length >= MANUAL_LARGE_CHUNK;
+            const sustainedChunks = multiWordChunks >= MANUAL_REPEAT_CHUNKS
+                                 && singleWordChunks === 0;
+            if (veryLargeChunk || sustainedChunks) {
+                manualCaptionsDetected = true;
+                updateWarnBtn();
+            }
+        }
+
         showNext();
     }
 
@@ -776,6 +1372,26 @@
         captionContainer = null;
         lastCaptionText  = '';
         wordQueue        = [];
+        // Detection resets per video; ack persists (it's a user preference).
+        manualCaptionsDetected    = false;
+        singleWordChunks          = 0;
+        multiWordChunks           = 0;
+        trackKind                 = null;
+        availableTracks           = [];
+        originalTrackBeforeSwitch = null;
+        rivetAutoSwitched         = false;
+        autoSwitchAttempted       = false;
+        pendingAutoExplain        = false;
+        _lastCurrentTrack         = null;
+        if (warnPopupEl) warnPopupEl.style.display = 'none';
+        updateWarnBtn();
+        // Ask the probe for the new video's track info as soon as it's likely
+        // to be ready. YouTube takes ~600ms to mount the new player state.
+        if (probeReady) {
+            setTimeout(requestTrackInfo,  800);
+            setTimeout(requestTrackInfo, 1600);
+            setTimeout(requestTrackInfo, 3000);
+        }
         // Reset adaptive-pacing state so the new video's pacing is measured
         // fresh (not biased by the previous video's chunk durations).
         lastChunkArrivalMs  = null;
@@ -830,6 +1446,10 @@
 
     // ---------- Toggle ----------
     function setEnabled(on) {
+        // Belt-and-suspenders: refuse to flip enabled=true on a non-watch
+        // page. The open button is already hidden in those contexts, but a
+        // stray Shift+S keypress shouldn't bring the overlay up either.
+        if (on && !isWatchPath()) return;
         enabled = on;
         if (!overlayEl) overlayEl = buildOverlay();
         overlayEl.style.display = on ? 'block' : 'none';
@@ -845,6 +1465,14 @@
             ensureCaptionsOn();
             setNativeCcHidden(!ccVisible);   // honor user's CC toggle
             schedulePosition();
+            // The boot-time polling may have missed the window where the
+            // tracklist became available (it only populates once captions
+            // are actually playing). Re-poll now that we've turned CC on.
+            if (probeReady) {
+                setTimeout(requestTrackInfo,  500);
+                setTimeout(requestTrackInfo, 1500);
+                setTimeout(requestTrackInfo, 3500);
+            }
         }
         storeEnabled(on);
         updateOpenButtonVisibility();
@@ -891,6 +1519,14 @@
         ensureMounted();
         updateOpenButtonVisibility();
         findAndObserveCaptions();
+        // Inject the page-context probe so we can call player.getOption /
+        // setOption for caption tracks. The probe replies with the initial
+        // snapshot via 'ready' message; we also poll for a few seconds since
+        // the player API may not be initialized yet at script-idle time.
+        injectProbe();
+        setTimeout(requestTrackInfo, 800);
+        setTimeout(requestTrackInfo, 2000);
+        setTimeout(requestTrackInfo, 5000);
 
         // Restore persisted enabled state. Wait briefly so the player and
         // CC button are ready before we try to flip everything on.
